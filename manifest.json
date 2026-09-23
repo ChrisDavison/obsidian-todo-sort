@@ -1,6 +1,6 @@
 {
   "id": "todo-sort-completed",
-  "name": "Todo",
+  "name": "Todo Sorting",
   "version": "1.0.0",
   "minAppVersion": "1.8.7",
   "description": "Sort tasks by completion or due date at the current list level.",
