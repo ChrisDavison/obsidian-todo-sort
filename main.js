@@ -331,6 +331,11 @@ function incompleteDate(item, through) {
   return null;
 }
 
+function skippedDateNotice(count) {
+  return count ? " " + count + " task" + (count === 1 ? "" : "s") +
+    " skipped from date sorting (outside date range)." : "";
+}
+
 // Incomplete tasks sort by in-range due date (or in-range scheduled date when
 // due is absent or too far away). Out-of-range and undated tasks follow in
 // their original order. Completed tasks follow using the completed-task rules.
@@ -519,7 +524,15 @@ class TodoSortCompletedPlugin extends Plugin {
     const results = [];
     let movedTotal = 0;
     const through = mode === "due-date" ? sortableThrough(this.settings, new Date()) : null;
+    let skippedDates = 0;
     for (const group of groups.values()) {
+      if (through !== null) {
+        skippedDates += group.starts.filter((line) => {
+          const item = parsed[line];
+          return tierOf(item) === 0 && (item.dueDate || item.scheduledDate) &&
+            !incompleteDate(item, through);
+        }).length;
+      }
       const result = applyGroup(lines, parsed, group, this.settings, mode, through);
       if (result) {
         results.push(result);
@@ -528,7 +541,7 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (!results.length) {
-      new Notice("Todo: nothing to sort.");
+      new Notice("Todo: nothing to sort." + skippedDateNotice(skippedDates));
       return;
     }
 
@@ -572,7 +585,7 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (mode === "due-date") {
-      new Notice("Todo: sorted tasks by due date; completed tasks moved to the bottom.");
+      new Notice("Todo: sorted tasks by due date; completed tasks moved to the bottom." + skippedDateNotice(skippedDates));
     } else {
       new Notice(
         "Todo: moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."

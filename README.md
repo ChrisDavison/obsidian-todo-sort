@@ -49,7 +49,10 @@ changing any of the above until you touch a setting.
   June dates are not. A due date beyond the range falls back to a scheduled
   date within the range. Tasks with neither date in range join undated tasks
   after dated tasks, preserving their relative order. This setting only affects
-  **Sort by due date**, not **Sort completed tasks to bottom**.
+  **Sort by due date**, not **Sort completed tasks to bottom**. The command's
+  notice counts tasks excluded from date sorting because every date they have
+  is beyond the range, even when nothing changes in the note. Tasks
+  using an in-range scheduled-date fallback are not counted.
 
 ## Usage
 
