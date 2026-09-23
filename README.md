@@ -55,3 +55,8 @@ There is no build step and no dependencies. `main.js` is the complete source.
 
 Not handled: ordered lists and multiple cursors. Those are reported rather than
 edited.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the
+full license text.
