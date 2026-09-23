@@ -5,5 +5,6 @@
   "minAppVersion": "1.8.7",
   "description": "Sort tasks by completion or due date at the current list level.",
   "author": "Davison",
+  "authorUrl": "https://github.com/ChrisDavison",
   "isDesktopOnly": false
 }

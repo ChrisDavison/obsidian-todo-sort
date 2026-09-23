@@ -43,9 +43,11 @@ changing any of the above until you touch a setting.
 
 ## Usage
 
-1. Put this folder in `<vault>/.obsidian/plugins/obsidian-todo-sort/`.
-2. Enable **Todo Sort** in Settings → Community plugins.
-3. Run `Todo: Sort completed tasks to bottom` from the command palette, or bind
+1. Download `main.js` and `manifest.json` from the desired [GitHub release](https://github.com/ChrisDavison/obsidian-todo-sort/releases).
+2. Put both files in `<vault>/.obsidian/plugins/todo-sort-completed/`. The folder
+   name must match the plugin ID in `manifest.json`.
+3. Enable **Todo Sort** in Settings → Community plugins.
+4. Run `Todo: Sort completed tasks to bottom` from the command palette, or bind
    a hotkey to it. Run `Todo: Sort by due date` to order incomplete tasks by
    their due or scheduled date.
 
