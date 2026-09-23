@@ -1,0 +1,9 @@
+{
+  "id": "todo-sort-completed",
+  "name": "Todo",
+  "version": "1.0.0",
+  "minAppVersion": "1.8.7",
+  "description": "Sort the current list level so completed tasks sink to the bottom, newest first.",
+  "author": "Davison",
+  "isDesktopOnly": false
+}
