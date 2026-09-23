@@ -27,7 +27,8 @@ rules described below. Overdue tasks are not specially grouped or highlighted.
 - One blank line keeps a list together; two consecutive blank lines break it.
 - Tasks inside blockquotes and callouts are supported. Quote-depth changes,
   quoted titles, paragraphs, and fenced code bound the list being sorted.
-- The cursor follows the task it was on, and a single undo reverses the sort.
+- The cursor follows its task after a sort. With a selection, it moves to the
+  first selected task. A single undo reverses the sort.
 
 These are the defaults. Settings → Todo can adjust the rules below without
 changing any of the above until you touch a setting.
@@ -57,3 +58,8 @@ There is no build step and no dependencies. `main.js` is the complete source.
 
 Not handled: ordered lists and multiple cursors. Those are reported rather than
 edited.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the
+full license text.
