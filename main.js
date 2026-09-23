@@ -1,4 +1,4 @@
-const { Plugin, Notice } = require("obsidian");
+const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
 
 /*
  * Todo: Sort completed tasks to bottom
@@ -13,10 +13,43 @@ const { Plugin, Notice } = require("obsidian");
  * selection the level is the shallowest list level present, and every affected
  * parent's complete child list is sorted.
  *
+ * The rules above are the defaults; a settings tab can treat `[-]` as
+ * incomplete, change the tab width, and move undated completed tasks to the
+ * top of the completed group.
+ *
  * Plain JavaScript on purpose: no build step, no dependencies.
  */
 
 const TAB_WIDTH = 4;
+
+const DEFAULT_SETTINGS = {
+  // `[-]` is completed (sinks below done). Off: `[-]` counts as incomplete.
+  cancelledCountsAsCompleted: true,
+  // Columns a tab counts for when measuring indentation.
+  tabWidth: TAB_WIDTH,
+  // Undated completed items come after dated ones. Off: before them.
+  undatedCompletedAtBottom: true,
+};
+
+function boolOr(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+// Keep persisted values sane; anything malformed falls back to the default.
+function normalizeSettings(loaded) {
+  const settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+  const tabWidth = Number.parseInt(settings.tabWidth, 10);
+  settings.tabWidth = tabWidth >= 1 && tabWidth <= 8 ? tabWidth : DEFAULT_SETTINGS.tabWidth;
+  settings.cancelledCountsAsCompleted = boolOr(
+    settings.cancelledCountsAsCompleted,
+    DEFAULT_SETTINGS.cancelledCountsAsCompleted
+  );
+  settings.undatedCompletedAtBottom = boolOr(
+    settings.undatedCompletedAtBottom,
+    DEFAULT_SETTINGS.undatedCompletedAtBottom
+  );
+  return settings;
+}
 
 // Checkbox marker: [-], [ ], [x], [X]. Tested before the plain-bullet pattern.
 const CHECKBOX_RE = /^([ \t]*)([-*+])([ \t]+)\[([ xX-])\](?=[ \t]|$)/;
@@ -26,10 +59,10 @@ const DONE_DATE_RE = /✅\s*(\d{4}-\d{2}-\d{2})/;
 const CANCEL_DATE_RE = /❌\s*(\d{4}-\d{2}-\d{2})/;
 const FENCE_RE = /^[ \t]*(```|~~~)/;
 
-function indentWidth(whitespace) {
+function indentWidth(whitespace, tabWidth) {
   let width = 0;
   for (const ch of whitespace) {
-    width += ch === "\t" ? TAB_WIDTH - (width % TAB_WIDTH) : 1;
+    width += ch === "\t" ? tabWidth - (width % tabWidth) : 1;
   }
   return width;
 }
@@ -43,12 +76,12 @@ function isBlank(line) {
   return /^[ \t]*$/.test(line);
 }
 
-function parseLines(lines) {
+function parseLines(lines, settings) {
   const parsed = [];
   let inFence = false;
 
   for (const line of lines) {
-    const indent = indentWidth(leadingWhitespace(line));
+    const indent = indentWidth(leadingWhitespace(line), settings.tabWidth);
 
     if (FENCE_RE.test(line)) {
       inFence = !inFence;
@@ -66,8 +99,13 @@ function parseLines(lines) {
       const symbol = checkbox[4];
       parsed.push({
         kind: "checkbox",
-        indent: indentWidth(checkbox[1]),
-        status: symbol === "x" || symbol === "X" ? "done" : symbol === "-" ? "cancelled" : "incomplete",
+        indent: indentWidth(checkbox[1], settings.tabWidth),
+        status:
+          symbol === "x" || symbol === "X"
+            ? "done"
+            : symbol === "-" && settings.cancelledCountsAsCompleted
+              ? "cancelled"
+              : "incomplete",
         doneDate: (DONE_DATE_RE.exec(line) || [])[1] || null,
         cancelDate: (CANCEL_DATE_RE.exec(line) || [])[1] || null,
       });
@@ -78,7 +116,7 @@ function parseLines(lines) {
     if (bullet) {
       parsed.push({
         kind: "bullet",
-        indent: indentWidth(bullet[1]),
+        indent: indentWidth(bullet[1], settings.tabWidth),
         status: "incomplete",
         doneDate: null,
         cancelDate: null,
@@ -217,8 +255,9 @@ function tierOf(item) {
 }
 
 // Incomplete in original order, then done newest first, then cancelled newest first.
-// Undated completed items come after dated ones. Ordering is stable.
-function sortOrder(parsed, starts) {
+// Undated completed items come after dated ones (before them when the settings
+// say so). Ordering is stable.
+function sortOrder(parsed, starts, settings) {
   const entries = starts.map((line, position) => ({ position, item: parsed[line] }));
 
   entries.sort((a, b) => {
@@ -230,15 +269,15 @@ function sortOrder(parsed, starts) {
     const dateA = tierA === 1 ? a.item.doneDate : a.item.cancelDate;
     const dateB = tierB === 1 ? b.item.doneDate : b.item.cancelDate;
     if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateB < dateA ? -1 : 1);
-    if (dateA) return -1;
-    if (dateB) return 1;
+    if (dateA) return settings.undatedCompletedAtBottom ? -1 : 1;
+    if (dateB) return settings.undatedCompletedAtBottom ? 1 : -1;
     return a.position - b.position;
   });
 
   return entries.map((entry) => entry.position);
 }
 
-function applyGroup(lines, parsed, group) {
+function applyGroup(lines, parsed, group, settings) {
   const { starts, end } = group;
   if (starts.length < 2) return null;
 
@@ -260,7 +299,7 @@ function applyGroup(lines, parsed, group) {
     gaps.push(span.slice(length));
   }
 
-  const order = sortOrder(parsed, starts);
+  const order = sortOrder(parsed, starts, settings);
   const unchanged = order.every((value, position) => value === position);
   if (unchanged) return null;
 
@@ -294,7 +333,9 @@ function movedLineNumber(result, anchor) {
 }
 
 class TodoSortCompletedPlugin extends Plugin {
-  onload() {
+  async onload() {
+    this.settings = normalizeSettings(await this.loadData());
+    this.addSettingTab(new TodoSortSettingTab(this.app, this));
     this.addCommand({
       id: "sort-completed-to-bottom",
       name: "Sort completed tasks to bottom",
@@ -308,9 +349,13 @@ class TodoSortCompletedPlugin extends Plugin {
     });
   }
 
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
+
   sortCompletedToBottom(editor) {
     const lines = editor.getValue().split("\n");
-    const parsed = parseLines(lines);
+    const parsed = parseLines(lines, this.settings);
     const cursor = editor.getCursor();
     const selections = editor.listSelections();
 
@@ -369,7 +414,7 @@ class TodoSortCompletedPlugin extends Plugin {
     const results = [];
     let movedTotal = 0;
     for (const group of groups.values()) {
-      const result = applyGroup(lines, parsed, group);
+      const result = applyGroup(lines, parsed, group, this.settings);
       if (result) {
         results.push(result);
         movedTotal += result.moved;
@@ -418,6 +463,57 @@ class TodoSortCompletedPlugin extends Plugin {
     new Notice(
       "Todo: moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
     );
+  }
+}
+
+class TodoSortSettingTab extends PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Cancelled counts as completed")
+      .setDesc("Treat [-] tasks as completed, so they sink below done tasks. When off, [-] counts as incomplete and stays on top.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.cancelledCountsAsCompleted).onChange(async (value) => {
+          this.plugin.settings.cancelledCountsAsCompleted = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Tab width")
+      .setDesc("Columns a tab character counts for when measuring list indentation (1-8).")
+      .addText((text) =>
+        text.setValue(String(this.plugin.settings.tabWidth)).onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          if (Number.isNaN(parsed) || parsed < 1 || parsed > 8) {
+            text.setValue(String(this.plugin.settings.tabWidth));
+            return;
+          }
+          this.plugin.settings.tabWidth = parsed;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Undated completed tasks")
+      .setDesc("Where completed tasks without a date go within the completed group.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("bottom", "Bottom of the completed group")
+          .addOption("top", "Top of the completed group")
+          .setValue(this.plugin.settings.undatedCompletedAtBottom ? "bottom" : "top")
+          .onChange(async (value) => {
+            this.plugin.settings.undatedCompletedAtBottom = value === "bottom";
+            await this.plugin.saveSettings();
+          })
+      );
   }
 }
 
