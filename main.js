@@ -380,7 +380,11 @@ function applyGroup(lines, parsed, group, settings, mode) {
     regionStart: starts[0],
     regionEnd: end,
     text,
-    moved: starts.filter((line) => tierOf(parsed[line]) > 0).length,
+    moved: order.reduce((count, sourcePosition, destinationPosition) => {
+      return count + (
+        sourcePosition !== destinationPosition && tierOf(parsed[starts[sourcePosition]]) > 0 ? 1 : 0
+      );
+    }, 0),
   };
 }
 
@@ -528,7 +532,12 @@ class TodoSortCompletedPlugin extends Plugin {
       ],
     });
 
-    if (!hasSelection && results.length === 1) {
+    if (hasSelection) {
+      const firstSelectedItem = anchors[0];
+      const result = results.find((candidate) => candidate.starts.includes(firstSelectedItem));
+      const newLine = result ? movedLineNumber(result, firstSelectedItem) : firstSelectedItem;
+      if (newLine !== null) editor.setCursor({ line: newLine, ch: 0 });
+    } else if (results.length === 1) {
       const newLine = movedLineNumber(results[0], anchors[0]);
       if (newLine !== null) editor.setCursor({ line: newLine, ch: cursor.ch });
     }
