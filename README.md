@@ -11,6 +11,7 @@ everything else keeps its order.
 due dates, falling back to `⏳` scheduled dates. Undated incomplete tasks follow
 dated ones. Completed tasks move to the bottom using the completed-task sorting
 rules described below. Overdue tasks are not specially grouped or highlighted.
+You can optionally limit sorting to dates within a number of days from today.
 
 ## Behaviour
 
@@ -41,6 +42,14 @@ changing any of the above until you touch a setting.
   list indentation. Matters when lists mix tabs and spaces.
 - **Undated completed tasks** (bottom of the completed group): completed tasks
   without a date follow the dated ones. Top: they come first.
+- **Sortable date range (days)** (blank): blank sorts all dates as before. Set a
+  whole number of days (0-365000) to sort incomplete tasks dated on or before
+  today plus that many calendar days, including overdue dates. For example,
+  with 60 days set on January 1, January and February dates are sortable, but
+  June dates are not. A due date beyond the range falls back to a scheduled
+  date within the range. Tasks with neither date in range join undated tasks
+  after dated tasks, preserving their relative order. This setting only affects
+  **Sort by due date**, not **Sort completed tasks to bottom**.
 
 ## Usage
 
