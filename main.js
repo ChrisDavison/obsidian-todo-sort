@@ -73,7 +73,8 @@ function leadingWhitespace(line) {
 }
 
 function isBlank(line) {
-  return /^[ \t]*$/.test(line);
+  const content = line.replace(/^((?:[ \t]*>(?:[ \t]?))+)/, "");
+  return /^[ \t]*$/.test(content);
 }
 
 function parseLines(lines, settings) {
@@ -81,42 +82,50 @@ function parseLines(lines, settings) {
   let inFence = false;
 
   for (const line of lines) {
-    const indent = indentWidth(leadingWhitespace(line), settings.tabWidth);
+    // Strip only the blockquote syntax while parsing. The original line is
+    // retained for edits, so every marker and its spacing moves with its task.
+    const quote = /^((?:[ \t]*>(?:[ \t]?))+)/.exec(line);
+    const prefix = quote ? quote[1] : "";
+    const content = line.slice(prefix.length);
+    const quoteDepth = (prefix.match(/>/g) || []).length;
+    const indent = indentWidth(leadingWhitespace(content), settings.tabWidth);
 
-    if (FENCE_RE.test(line)) {
+    if (FENCE_RE.test(content)) {
       inFence = !inFence;
-      parsed.push({ kind: "none", indent, status: null, doneDate: null, cancelDate: null });
+      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null });
       continue;
     }
 
     if (inFence) {
-      parsed.push({ kind: "none", indent, status: null, doneDate: null, cancelDate: null });
+      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null });
       continue;
     }
 
-    const checkbox = CHECKBOX_RE.exec(line);
+    const checkbox = CHECKBOX_RE.exec(content);
     if (checkbox) {
       const symbol = checkbox[4];
       parsed.push({
         kind: "checkbox",
         indent: indentWidth(checkbox[1], settings.tabWidth),
+        quoteDepth,
         status:
           symbol === "x" || symbol === "X"
             ? "done"
             : symbol === "-" && settings.cancelledCountsAsCompleted
               ? "cancelled"
               : "incomplete",
-        doneDate: (DONE_DATE_RE.exec(line) || [])[1] || null,
-        cancelDate: (CANCEL_DATE_RE.exec(line) || [])[1] || null,
+        doneDate: (DONE_DATE_RE.exec(content) || [])[1] || null,
+        cancelDate: (CANCEL_DATE_RE.exec(content) || [])[1] || null,
       });
       continue;
     }
 
-    const bullet = BULLET_RE.exec(line);
+    const bullet = BULLET_RE.exec(content);
     if (bullet) {
       parsed.push({
         kind: "bullet",
         indent: indentWidth(bullet[1], settings.tabWidth),
+        quoteDepth,
         status: "incomplete",
         doneDate: null,
         cancelDate: null,
@@ -124,7 +133,7 @@ function parseLines(lines, settings) {
       continue;
     }
 
-    parsed.push({ kind: "none", indent, status: null, doneDate: null, cancelDate: null });
+    parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null });
   }
 
   return parsed;
@@ -133,6 +142,7 @@ function parseLines(lines, settings) {
 // Nearest item above with a shallower indent, or null when the item is top level.
 // Stops at an unindented non-list line (heading, paragraph, rule) or two blank lines.
 function findParent(parsed, lines, index, width) {
+  const quoteDepth = parsed[index].quoteDepth;
   let blanks = 0;
 
   for (let i = index - 1; i >= 0; i--) {
@@ -144,6 +154,7 @@ function findParent(parsed, lines, index, width) {
     blanks = 0;
 
     const line = parsed[i];
+    if (line.quoteDepth !== quoteDepth) return null;
     if (line.kind === "none") {
       if (line.indent === 0) return null;
       continue;
@@ -158,6 +169,7 @@ function findParent(parsed, lines, index, width) {
 function collectChildren(parsed, lines, parentIndex, width) {
   const starts = [];
   const parentIndent = parsed[parentIndex].indent;
+  const quoteDepth = parsed[parentIndex].quoteDepth;
   let end = parentIndex + 1;
   let blanks = 0;
 
@@ -171,6 +183,7 @@ function collectChildren(parsed, lines, parentIndex, width) {
     blanks = 0;
 
     const line = parsed[i];
+    if (line.quoteDepth !== quoteDepth) break;
     if (line.kind === "none") {
       if (line.indent === 0) break;
       end = i + 1;
@@ -186,6 +199,7 @@ function collectChildren(parsed, lines, parentIndex, width) {
 
 // Top-level run containing `index`, bounded by shallower items and unindented non-list lines.
 function collectRootGroup(parsed, lines, index, width) {
+  const quoteDepth = parsed[index].quoteDepth;
   let start = index;
   let blanks = 0;
 
@@ -199,6 +213,7 @@ function collectRootGroup(parsed, lines, index, width) {
     blanks = 0;
 
     const line = parsed[i];
+    if (line.quoteDepth !== quoteDepth) break;
     if (line.kind === "none") {
       if (line.indent === 0) break;
       start = i;
@@ -221,6 +236,7 @@ function collectRootGroup(parsed, lines, index, width) {
     blanks = 0;
 
     const line = parsed[i];
+    if (line.quoteDepth !== quoteDepth) break;
     if (line.kind === "none") {
       if (line.indent === 0) break;
       end = i + 1;
