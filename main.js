@@ -21,6 +21,7 @@ const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
  */
 
 const TAB_WIDTH = 4;
+const MAX_SORTABLE_RANGE_DAYS = 365000;
 
 const DEFAULT_SETTINGS = {
   // `[-]` is completed (sinks below done). Off: `[-]` counts as incomplete.
@@ -29,10 +30,20 @@ const DEFAULT_SETTINGS = {
   tabWidth: TAB_WIDTH,
   // Undated completed items come after dated ones. Off: before them.
   undatedCompletedAtBottom: true,
+  // No limit by default; otherwise the number of days ahead to sort by date.
+  sortableDateRangeDays: null,
 };
 
 function boolOr(value, fallback) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function parseSortableDays(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) return null;
+  const days = Number(text);
+  return Number.isSafeInteger(days) && days <= MAX_SORTABLE_RANGE_DAYS ? days : null;
 }
 
 // Keep persisted values sane; anything malformed falls back to the default.
@@ -48,6 +59,7 @@ function normalizeSettings(loaded) {
     settings.undatedCompletedAtBottom,
     DEFAULT_SETTINGS.undatedCompletedAtBottom
   );
+  settings.sortableDateRangeDays = parseSortableDays(settings.sortableDateRangeDays);
   return settings;
 }
 
@@ -299,14 +311,35 @@ function sortOrder(parsed, starts, settings) {
   return entries.map((entry) => entry.position);
 }
 
-function incompleteDate(item) {
-  return item.dueDate || item.scheduledDate;
+function sortableThrough(settings, today) {
+  if (settings.sortableDateRangeDays === null) return null;
+  // Use local calendar days rather than elapsed milliseconds, so DST changes
+  // do not shift the inclusive last sortable day.
+  const end = new Date(
+    today.getFullYear(), today.getMonth(), today.getDate() + settings.sortableDateRangeDays
+  );
+  return [
+    end.getFullYear(),
+    String(end.getMonth() + 1).padStart(2, "0"),
+    String(end.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
-// Incomplete tasks sort by due date (or scheduled date when no due date is
-// present), soonest first, with undated tasks after dated ones. Completed tasks
-// follow, using the same ordering as the completed-task command.
-function sortDueDateOrder(parsed, starts, settings) {
+function incompleteDate(item, through) {
+  if (item.dueDate && (through === null || item.dueDate <= through)) return item.dueDate;
+  if (item.scheduledDate && (through === null || item.scheduledDate <= through)) return item.scheduledDate;
+  return null;
+}
+
+function skippedDateNotice(count) {
+  return count ? " " + count + " task" + (count === 1 ? "" : "s") +
+    " skipped from date sorting (outside date range)." : "";
+}
+
+// Incomplete tasks sort by in-range due date (or in-range scheduled date when
+// due is absent or too far away). Out-of-range and undated tasks follow in
+// their original order. Completed tasks follow using the completed-task rules.
+function sortDueDateOrder(parsed, starts, settings, through) {
   const entries = starts.map((line, position) => ({ position, item: parsed[line] }));
 
   entries.sort((a, b) => {
@@ -319,8 +352,8 @@ function sortDueDateOrder(parsed, starts, settings) {
     }
 
     if (tierA === 0) {
-      const dateA = incompleteDate(a.item);
-      const dateB = incompleteDate(b.item);
+      const dateA = incompleteDate(a.item, through);
+      const dateB = incompleteDate(b.item, through);
       if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateA < dateB ? -1 : 1);
       if (dateA) return -1;
       if (dateB) return 1;
@@ -338,7 +371,7 @@ function sortDueDateOrder(parsed, starts, settings) {
   return entries.map((entry) => entry.position);
 }
 
-function applyGroup(lines, parsed, group, settings, mode) {
+function applyGroup(lines, parsed, group, settings, mode, through) {
   const { starts, end } = group;
   if (starts.length < 2) return null;
 
@@ -361,7 +394,7 @@ function applyGroup(lines, parsed, group, settings, mode) {
   }
 
   const order = mode === "due-date"
-    ? sortDueDateOrder(parsed, starts, settings)
+    ? sortDueDateOrder(parsed, starts, settings, through)
     : sortOrder(parsed, starts, settings);
   const unchanged = order.every((value, position) => value === position);
   if (unchanged) return null;
@@ -490,8 +523,17 @@ class TodoSortCompletedPlugin extends Plugin {
 
     const results = [];
     let movedTotal = 0;
+    const through = mode === "due-date" ? sortableThrough(this.settings, new Date()) : null;
+    let skippedDates = 0;
     for (const group of groups.values()) {
-      const result = applyGroup(lines, parsed, group, this.settings, mode);
+      if (through !== null) {
+        skippedDates += group.starts.filter((line) => {
+          const item = parsed[line];
+          return tierOf(item) === 0 && (item.dueDate || item.scheduledDate) &&
+            !incompleteDate(item, through);
+        }).length;
+      }
+      const result = applyGroup(lines, parsed, group, this.settings, mode, through);
       if (result) {
         results.push(result);
         movedTotal += result.moved;
@@ -499,7 +541,7 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (!results.length) {
-      new Notice("Todo: nothing to sort.");
+      new Notice("Todo: nothing to sort." + skippedDateNotice(skippedDates));
       return;
     }
 
@@ -543,7 +585,7 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (mode === "due-date") {
-      new Notice("Todo: sorted tasks by due date; completed tasks moved to the bottom.");
+      new Notice("Todo: sorted tasks by due date; completed tasks moved to the bottom." + skippedDateNotice(skippedDates));
     } else {
       new Notice(
         "Todo: moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
@@ -583,6 +625,29 @@ class TodoSortSettingTab extends PluginSettingTab {
             return;
           }
           this.plugin.settings.tabWidth = parsed;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Sortable date range (days)")
+      .setDesc(
+        "Sort incomplete tasks dated through today plus this many days (0-365000). " +
+        "Later due dates can fall back to an in-range scheduled date; otherwise " +
+        "they stay with undated tasks. Leave blank to always sort by date."
+      )
+      .addText((text) =>
+        text.setPlaceholder("Always sort").setValue(
+          this.plugin.settings.sortableDateRangeDays === null ? "" : String(this.plugin.settings.sortableDateRangeDays)
+        ).onChange(async (value) => {
+          const trimmed = value.trim();
+          const days = parseSortableDays(trimmed);
+          if (trimmed && days === null) {
+            const previous = this.plugin.settings.sortableDateRangeDays;
+            text.setValue(previous === null ? "" : String(previous));
+            return;
+          }
+          this.plugin.settings.sortableDateRangeDays = days;
           await this.plugin.saveSettings();
         })
       );
