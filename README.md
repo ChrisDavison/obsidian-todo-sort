@@ -27,7 +27,8 @@ rules described below. Overdue tasks are not specially grouped or highlighted.
 - One blank line keeps a list together; two consecutive blank lines break it.
 - Tasks inside blockquotes and callouts are supported. Quote-depth changes,
   quoted titles, paragraphs, and fenced code bound the list being sorted.
-- The cursor follows the task it was on, and a single undo reverses the sort.
+- The cursor follows its task after a sort. With a selection, it moves to the
+  first selected task. A single undo reverses the sort.
 
 These are the defaults. Settings → Todo can adjust the rules below without
 changing any of the above until you touch a setting.
@@ -43,7 +44,8 @@ changing any of the above until you touch a setting.
 
 ## Usage
 
-1. Put this folder in `<vault>/.obsidian/plugins/obsidian-todo-sort/`.
+1. Put this folder in `<vault>/.obsidian/plugins/todo-sort-completed/` (the
+   folder name must match the plugin ID in `manifest.json`).
 2. Enable **Todo Sort** in Settings → Community plugins.
 3. Run `Todo: Sort completed tasks to bottom` from the command palette, or bind
    a hotkey to it. Run `Todo: Sort by due date` to order incomplete tasks by
