@@ -19,6 +19,8 @@ everything else keeps its order.
 - No selection: the cursor item's own level. With a selection: the shallowest
   list level present, and every affected parent's full child list is sorted.
 - One blank line keeps a list together; two consecutive blank lines break it.
+- Tasks inside blockquotes and callouts are supported. Quote-depth changes,
+  quoted titles, paragraphs, and fenced code bound the list being sorted.
 - The cursor follows the task it was on, and a single undo reverses the sort.
 
 These are the defaults. Settings → Todo can adjust the rules below without
@@ -44,5 +46,5 @@ There is no build step and no dependencies. `main.js` is the complete source.
 
 ## Scope
 
-Not handled: tasks inside callouts or blockquotes, ordered lists, and multiple
-cursors. Those are reported rather than edited.
+Not handled: ordered lists and multiple cursors. Those are reported rather than
+edited.
