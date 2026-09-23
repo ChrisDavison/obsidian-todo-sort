@@ -3,7 +3,7 @@
   "name": "Todo",
   "version": "1.0.0",
   "minAppVersion": "1.8.7",
-  "description": "Sort the current list level so completed tasks sink to the bottom, newest first.",
+  "description": "Sort tasks by completion or due date at the current list level.",
   "author": "Davison",
   "isDesktopOnly": false
 }

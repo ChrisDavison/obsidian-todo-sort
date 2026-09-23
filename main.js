@@ -1,7 +1,7 @@
 const { Notice, Plugin, PluginSettingTab, Setting } = require("obsidian");
 
 /*
- * Todo: Sort completed tasks to bottom
+ * Todo: Sort completed tasks to bottom and Todo: Sort by due date
  *
  * Sorts one list level only. Whole subtrees move together and children keep
  * their order. A completed task is `[x]`/`[X]` (done) or `[-]` (cancelled);
@@ -57,6 +57,8 @@ const CHECKBOX_RE = /^([ \t]*)([-*+])([ \t]+)\[([ xX-])\](?=[ \t]|$)/;
 const BULLET_RE = /^([ \t]*)([-*+])(?=[ \t]|$)/;
 const DONE_DATE_RE = /✅\s*(\d{4}-\d{2}-\d{2})/;
 const CANCEL_DATE_RE = /❌\s*(\d{4}-\d{2}-\d{2})/;
+const DUE_DATE_RE = /📅\s*(\d{4}-\d{2}-\d{2})/;
+const SCHEDULED_DATE_RE = /⏳\s*(\d{4}-\d{2}-\d{2})/;
 const FENCE_RE = /^[ \t]*(```|~~~)/;
 
 function indentWidth(whitespace, tabWidth) {
@@ -92,12 +94,12 @@ function parseLines(lines, settings) {
 
     if (FENCE_RE.test(content)) {
       inFence = !inFence;
-      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null });
+      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null });
       continue;
     }
 
     if (inFence) {
-      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null });
+      parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null });
       continue;
     }
 
@@ -116,6 +118,8 @@ function parseLines(lines, settings) {
               : "incomplete",
         doneDate: (DONE_DATE_RE.exec(content) || [])[1] || null,
         cancelDate: (CANCEL_DATE_RE.exec(content) || [])[1] || null,
+        dueDate: (DUE_DATE_RE.exec(content) || [])[1] || null,
+        scheduledDate: (SCHEDULED_DATE_RE.exec(content) || [])[1] || null,
       });
       continue;
     }
@@ -129,11 +133,13 @@ function parseLines(lines, settings) {
         status: "incomplete",
         doneDate: null,
         cancelDate: null,
+        dueDate: null,
+        scheduledDate: null,
       });
       continue;
     }
 
-    parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null });
+    parsed.push({ kind: "none", indent, quoteDepth, status: null, doneDate: null, cancelDate: null, dueDate: null, scheduledDate: null });
   }
 
   return parsed;
@@ -293,7 +299,46 @@ function sortOrder(parsed, starts, settings) {
   return entries.map((entry) => entry.position);
 }
 
-function applyGroup(lines, parsed, group, settings) {
+function incompleteDate(item) {
+  return item.dueDate || item.scheduledDate;
+}
+
+// Incomplete tasks sort by due date (or scheduled date when no due date is
+// present), soonest first, with undated tasks after dated ones. Completed tasks
+// follow, using the same ordering as the completed-task command.
+function sortDueDateOrder(parsed, starts, settings) {
+  const entries = starts.map((line, position) => ({ position, item: parsed[line] }));
+
+  entries.sort((a, b) => {
+    const tierA = tierOf(a.item);
+    const tierB = tierOf(b.item);
+    if (tierA !== tierB) {
+      if (tierA === 0) return -1;
+      if (tierB === 0) return 1;
+      return tierA - tierB;
+    }
+
+    if (tierA === 0) {
+      const dateA = incompleteDate(a.item);
+      const dateB = incompleteDate(b.item);
+      if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateA < dateB ? -1 : 1);
+      if (dateA) return -1;
+      if (dateB) return 1;
+      return a.position - b.position;
+    }
+
+    const dateA = tierA === 1 ? a.item.doneDate : a.item.cancelDate;
+    const dateB = tierB === 1 ? b.item.doneDate : b.item.cancelDate;
+    if (dateA && dateB) return dateA === dateB ? a.position - b.position : (dateB < dateA ? -1 : 1);
+    if (dateA) return settings.undatedCompletedAtBottom ? -1 : 1;
+    if (dateB) return settings.undatedCompletedAtBottom ? 1 : -1;
+    return a.position - b.position;
+  });
+
+  return entries.map((entry) => entry.position);
+}
+
+function applyGroup(lines, parsed, group, settings, mode) {
   const { starts, end } = group;
   if (starts.length < 2) return null;
 
@@ -315,7 +360,9 @@ function applyGroup(lines, parsed, group, settings) {
     gaps.push(span.slice(length));
   }
 
-  const order = sortOrder(parsed, starts, settings);
+  const order = mode === "due-date"
+    ? sortDueDateOrder(parsed, starts, settings)
+    : sortOrder(parsed, starts, settings);
   const unchanged = order.every((value, position) => value === position);
   if (unchanged) return null;
 
@@ -359,7 +406,17 @@ class TodoSortCompletedPlugin extends Plugin {
         if (!editor) return false;
         // Reading (preview) mode has no editor to sort; only act in source/live preview.
         if (ctx && typeof ctx.getMode === "function" && ctx.getMode() !== "source") return false;
-        if (!checking) this.sortCompletedToBottom(editor);
+        if (!checking) this.sortTasks(editor, "completed");
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "sort-by-due-date",
+      name: "Sort by due date",
+      editorCheckCallback: (checking, editor, ctx) => {
+        if (!editor) return false;
+        if (ctx && typeof ctx.getMode === "function" && ctx.getMode() !== "source") return false;
+        if (!checking) this.sortTasks(editor, "due-date");
         return true;
       },
     });
@@ -369,7 +426,7 @@ class TodoSortCompletedPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  sortCompletedToBottom(editor) {
+  sortTasks(editor, mode) {
     const lines = editor.getValue().split("\n");
     const parsed = parseLines(lines, this.settings);
     const cursor = editor.getCursor();
@@ -430,7 +487,7 @@ class TodoSortCompletedPlugin extends Plugin {
     const results = [];
     let movedTotal = 0;
     for (const group of groups.values()) {
-      const result = applyGroup(lines, parsed, group, this.settings);
+      const result = applyGroup(lines, parsed, group, this.settings, mode);
       if (result) {
         results.push(result);
         movedTotal += result.moved;
@@ -476,9 +533,13 @@ class TodoSortCompletedPlugin extends Plugin {
       if (newLine !== null) editor.setCursor({ line: newLine, ch: cursor.ch });
     }
 
-    new Notice(
-      "Todo: moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
-    );
+    if (mode === "due-date") {
+      new Notice("Todo: sorted tasks by due date; completed tasks moved to the bottom.");
+    } else {
+      new Notice(
+        "Todo: moved " + movedTotal + " completed task" + (movedTotal === 1 ? "" : "s") + " to the bottom."
+      );
+    }
   }
 }
 
