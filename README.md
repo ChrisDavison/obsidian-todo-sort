@@ -1,10 +1,16 @@
 # Obsidian Todo Sort
 
-An Obsidian plugin with one command: **`Todo: Sort completed tasks to bottom`**.
+An Obsidian plugin with two commands: **`Todo: Sort completed tasks to bottom`**
+and **`Todo: Sort by due date`**.
 
 It reorders the todo list at the level your cursor is on, or at the shallowest
 list level touched by your selection. Completed tasks sink to the bottom and
 everything else keeps its order.
+
+`Todo: Sort by due date` orders incomplete tasks soonest first using `📅`
+due dates, falling back to `⏳` scheduled dates. Undated incomplete tasks follow
+dated ones. Completed tasks move to the bottom using the completed-task sorting
+rules described below. Overdue tasks are not specially grouped or highlighted.
 
 ## Behaviour
 
@@ -40,7 +46,8 @@ changing any of the above until you touch a setting.
 1. Put this folder in `<vault>/.obsidian/plugins/obsidian-todo-sort/`.
 2. Enable **Todo Sort** in Settings → Community plugins.
 3. Run `Todo: Sort completed tasks to bottom` from the command palette, or bind
-   a hotkey to it.
+   a hotkey to it. Run `Todo: Sort by due date` to order incomplete tasks by
+   their due or scheduled date.
 
 There is no build step and no dependencies. `main.js` is the complete source.
 
