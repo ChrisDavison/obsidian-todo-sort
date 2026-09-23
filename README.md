@@ -21,6 +21,18 @@ everything else keeps its order.
 - One blank line keeps a list together; two consecutive blank lines break it.
 - The cursor follows the task it was on, and a single undo reverses the sort.
 
+These are the defaults. Settings → Todo can adjust the rules below without
+changing any of the above until you touch a setting.
+
+## Settings
+
+- **Cancelled counts as completed** (on): `[-]` tasks are completed and sink
+  below done tasks. Off: `[-]` counts as incomplete and stays on top.
+- **Tab width** (4): how many columns a tab character counts for when measuring
+  list indentation. Matters when lists mix tabs and spaces.
+- **Undated completed tasks** (bottom of the completed group): completed tasks
+  without a date follow the dated ones. Top: they come first.
+
 ## Usage
 
 1. Put this folder in `<vault>/.obsidian/plugins/obsidian-todo-sort/`.
