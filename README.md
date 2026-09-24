@@ -1,7 +1,7 @@
 # Obsidian Todo Sort
 
-An Obsidian plugin with two commands: **`Todo: Sort completed tasks to bottom`**
-and **`Todo: Sort by due date`**.
+An Obsidian plugin with three commands: **`Todo: Sort completed tasks to bottom`**
+**`Todo: Sort by due date`**, and **`Todo: Clear completed tasks`**.
 
 It reorders the todo list at the level your cursor is on, or at the shallowest
 list level touched by your selection. Completed tasks sink to the bottom and
@@ -12,6 +12,11 @@ due dates, falling back to `⏳` scheduled dates. Undated incomplete tasks follo
 dated ones. Completed tasks move to the bottom using the completed-task sorting
 rules described below. Overdue tasks are not specially grouped or highlighted.
 You can optionally limit sorting to dates within a number of days from today.
+
+`Todo: Clear completed tasks` removes `[x]` / `[X]` items at the same list
+level and within the same cursor or selection scope as sorting. Children and
+annotations are removed with their parent, including unfinished children.
+Cancelled `[-]` items are kept by default. The edit can be undone in one step.
 
 ## Behaviour
 
@@ -38,6 +43,8 @@ changing any of the above until you touch a setting.
 
 - **Cancelled counts as completed** (on): `[-]` tasks are completed and sink
   below done tasks. Off: `[-]` counts as incomplete and stays on top.
+- **Clear cancelled tasks** (off): also remove `[-]` items when clearing
+  completed tasks. This is independent of **Cancelled counts as completed**.
 - **Tab width** (4): how many columns a tab character counts for when measuring
   list indentation. Matters when lists mix tabs and spaces.
 - **Undated completed tasks** (bottom of the completed group): completed tasks

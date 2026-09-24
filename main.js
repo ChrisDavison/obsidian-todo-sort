@@ -26,6 +26,7 @@ const MAX_SORTABLE_RANGE_DAYS = 365000;
 const DEFAULT_SETTINGS = {
   // `[-]` is completed (sinks below done). Off: `[-]` counts as incomplete.
   cancelledCountsAsCompleted: true,
+  clearCancelledTasks: false,
   // Columns a tab counts for when measuring indentation.
   tabWidth: TAB_WIDTH,
   // Undated completed items come after dated ones. Off: before them.
@@ -55,6 +56,7 @@ function normalizeSettings(loaded) {
     settings.cancelledCountsAsCompleted,
     DEFAULT_SETTINGS.cancelledCountsAsCompleted
   );
+  settings.clearCancelledTasks = boolOr(settings.clearCancelledTasks, false);
   settings.undatedCompletedAtBottom = boolOr(
     settings.undatedCompletedAtBottom,
     DEFAULT_SETTINGS.undatedCompletedAtBottom
@@ -373,7 +375,7 @@ function sortDueDateOrder(parsed, starts, settings, through) {
 
 function applyGroup(lines, parsed, group, settings, mode, through) {
   const { starts, end } = group;
-  if (starts.length < 2) return null;
+  if (!starts.length || (mode !== "clear" && starts.length < 2)) return null;
 
   const spans = [];
   for (let i = 0; i < starts.length; i++) {
@@ -391,6 +393,19 @@ function applyGroup(lines, parsed, group, settings, mode, through) {
     while (length > 0 && isBlank(span[length - 1])) length -= 1;
     cores.push(span.slice(0, length));
     gaps.push(span.slice(length));
+  }
+
+  if (mode === "clear") {
+    const order = starts.map((_, i) => i).filter((i) =>
+      parsed[starts[i]].status !== "done" &&
+      !(settings.clearCancelledTasks && parsed[starts[i]].status === "cancelled")
+    );
+    if (order.length === starts.length) return null;
+    return {
+      starts, order, cores, gaps, regionStart: starts[0], regionEnd: end,
+      text: spans.flatMap((span, i) => order.includes(i) ? span : gaps[i]),
+      moved: starts.length - order.length,
+    };
   }
 
   const order = mode === "due-date"
@@ -448,6 +463,16 @@ class TodoSortCompletedPlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "clear-completed-tasks",
+      name: "Clear completed tasks",
+      editorCheckCallback: (checking, editor, ctx) => {
+        if (!editor) return false;
+        if (ctx && typeof ctx.getMode === "function" && ctx.getMode() !== "source") return false;
+        if (!checking) this.sortTasks(editor, "clear");
+        return true;
+      },
+    });
+    this.addCommand({
       id: "sort-by-due-date",
       name: "Sort by due date",
       editorCheckCallback: (checking, editor, ctx) => {
@@ -465,7 +490,9 @@ class TodoSortCompletedPlugin extends Plugin {
 
   sortTasks(editor, mode) {
     const lines = editor.getValue().split("\n");
-    const parsed = parseLines(lines, this.settings);
+    const parsed = parseLines(lines, mode === "clear"
+      ? { ...this.settings, cancelledCountsAsCompleted: true }
+      : this.settings);
     const cursor = editor.getCursor();
     const selections = editor.listSelections();
 
@@ -490,7 +517,7 @@ class TodoSortCompletedPlugin extends Plugin {
         if (parsed[i].kind !== "none") widths.push(parsed[i].indent);
       }
       if (!widths.length) {
-        new Notice("Todo: nothing to sort.");
+        new Notice(mode === "clear" ? "Todo: nothing to clear." : "Todo: nothing to sort.");
         return;
       }
       width = Math.min(...widths);
@@ -541,7 +568,7 @@ class TodoSortCompletedPlugin extends Plugin {
     }
 
     if (!results.length) {
-      new Notice("Todo: nothing to sort." + skippedDateNotice(skippedDates));
+      new Notice(mode === "clear" ? "Todo: nothing to clear." : "Todo: nothing to sort." + skippedDateNotice(skippedDates));
       return;
     }
 
@@ -562,6 +589,23 @@ class TodoSortCompletedPlugin extends Plugin {
         replacement.push(lines[index]);
         index += 1;
       }
+    }
+
+    if (mode === "clear") {
+      // Include the following newline when removing whole lines. At EOF,
+      // include the preceding newline so clearing the final item leaves no stub.
+      let from = { line: start, ch: 0 };
+      let to = { line: end - 1, ch: lines[end - 1].length };
+      let text = replacement.join("\n");
+      if (end < lines.length) {
+        to = { line: end, ch: 0 };
+        if (replacement.length) text += "\n";
+      } else if (!replacement.length && start > 0) {
+        from = { line: start - 1, ch: lines[start - 1].length };
+      }
+      editor.transaction({ changes: [{ from, to, text }] });
+      new Notice("Todo: cleared " + movedTotal + " task" + (movedTotal === 1 ? "" : "s") + ".");
+      return;
     }
 
     editor.transaction({
@@ -610,6 +654,16 @@ class TodoSortSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.cancelledCountsAsCompleted).onChange(async (value) => {
           this.plugin.settings.cancelledCountsAsCompleted = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Clear cancelled tasks")
+      .setDesc("Also remove [-] tasks when running Clear completed tasks. Independent of the sorting setting.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.clearCancelledTasks).onChange(async (value) => {
+          this.plugin.settings.clearCancelledTasks = value;
           await this.plugin.saveSettings();
         })
       );

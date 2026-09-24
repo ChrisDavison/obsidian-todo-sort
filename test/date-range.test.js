@@ -65,8 +65,8 @@ function sort(plugin, input, mode = "due-date", selection = null) {
     transaction: ({ changes }) => {
       const { from, to, text } = changes[0];
       const lines = value.split("\n");
-      lines.splice(from.line, to.line - from.line + 1, ...text.split("\n"));
-      value = lines.join("\n");
+      const offset = (pos) => lines.slice(0, pos.line).reduce((n, line) => n + line.length + 1, 0) + pos.ch;
+      value = value.slice(0, offset(from)) + text + value.slice(offset(to));
     },
     setCursor: () => {},
   };
@@ -180,4 +180,33 @@ test("date range does not change completed-task sorting", async () => {
   const input = "- [x] Done\n- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01";
   assert.equal(sort(plugin, input, "completed"), "- [ ] June 📅 2026-06-01\n- [ ] Today 📅 2026-01-01\n- [x] Done");
   assert.equal(plugin.notices.at(-1), "Todo: moved 1 completed task to the bottom.");
+});
+
+
+test("clear removes done subtrees and preserves cancelled tasks by default", async () => {
+  const plugin = pluginWithSettings(null);
+  await plugin.onload();
+  assert.equal(plugin.settings.clearCancelledTasks, false);
+  assert.equal(sort(plugin, "- [x] Done\n  - [ ] Child\n- [-] Cancelled\n- [ ] Open", "clear"),
+    "- [-] Cancelled\n- [ ] Open");
+});
+
+test("clear cancelled setting is independent of sorting and persists", async () => {
+  const plugin = pluginWithSettings({ cancelledCountsAsCompleted: false });
+  await plugin.onload();
+  plugin.settingTab.display();
+  const control = plugin.settingControls.find((s) => s.name === "Clear cancelled tasks").control;
+  await control.change(true);
+  assert.equal(plugin.saved.clearCancelledTasks, true);
+  assert.equal(sort(plugin, "- [-] Cancelled\n- [X] Done\n# Keep", "clear"), "# Keep");
+});
+
+test("clear handles a single final task and leaves incomplete tasks alone", async () => {
+  const plugin = pluginWithSettings({ clearCancelledTasks: "true" });
+  await plugin.onload();
+  assert.equal(plugin.settings.clearCancelledTasks, false);
+  assert.equal(sort(plugin, "- [x] Done", "clear"), "");
+  assert.equal(sort(plugin, "- [ ] Open\n- [x] Done", "clear"), "- [ ] Open");
+  assert.equal(sort(plugin, "- [ ] Open", "clear"), "- [ ] Open");
+  assert.equal(plugin.notices.at(-1), "Todo: nothing to clear.");
 });
