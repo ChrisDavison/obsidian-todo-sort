@@ -210,3 +210,135 @@ test("clear handles a single final task and leaves incomplete tasks alone", asyn
   assert.equal(sort(plugin, "- [ ] Open", "clear"), "- [ ] Open");
   assert.equal(plugin.notices.at(-1), "Todo: nothing to clear.");
 });
+
+test("document clear removes completed tasks from separate and nested lists", async () => {
+  const plugin = pluginWithSettings(null);
+  await plugin.onload();
+  let value = [
+    "# First",
+    "- [ ] Parent",
+    "  - [x] Completed child",
+    "  - [ ] Open child",
+    "",
+    "# Second",
+    "- [x] Completed parent",
+    "  - [ ] Child removed with parent",
+    "- [-] Cancelled stays",
+    "- [ ] Open",
+  ].join("\n");
+  const editor = {
+    getValue: () => value,
+    transaction: ({ changes }) => { value = changes[0].text; },
+  };
+  plugin.clearCompletedDocument(editor);
+  assert.equal(value, [
+    "# First",
+    "- [ ] Parent",
+    "  - [ ] Open child",
+    "",
+    "# Second",
+    "- [-] Cancelled stays",
+    "- [ ] Open",
+  ].join("\n"));
+  assert.equal(plugin.notices.at(-1),
+    "Todo: cleared 2 completed tasks from this document.");
+});
+
+test("document clear can remove cancelled tasks and ignores fenced checkboxes", async () => {
+  const plugin = pluginWithSettings({ clearCancelledTasks: true });
+  await plugin.onload();
+  let value = "```\n- [x] Example\n```\n- [-] Cancelled";
+  const editor = {
+    getValue: () => value,
+    transaction: ({ changes }) => { value = changes[0].text; },
+  };
+  plugin.clearCompletedDocument(editor);
+  assert.equal(value, "```\n- [x] Example\n```");
+  assert.equal(plugin.notices.at(-1),
+    "Todo: cleared 1 completed task from this document.");
+});
+
+test("complete-tree safeguard blocks a parent but continues clearing other document tasks", async () => {
+  const plugin = pluginWithSettings({ requireCompleteTreeForClearing: true });
+  await plugin.onload();
+  let value = [
+    "- Test A",
+    "  - [x] complete",
+    "  - another",
+    "- [x] Test B",
+    "  - [ ] not",
+    "  - [x] yes",
+    "- [x] Standalone",
+  ].join("\n");
+  const editor = {
+    getValue: () => value,
+    transaction: ({ changes }) => { value = changes[0].text; },
+  };
+  plugin.clearCompletedDocument(editor);
+  assert.equal(value, [
+    "- Test A",
+    "  - another",
+    "- [x] Test B",
+    "  - [ ] not",
+    "  - [x] yes",
+  ].join("\n"));
+  assert.equal(plugin.notices.at(-1),
+    "Todo: cleared 2 completed tasks from this document. " +
+    "1 incomplete task tree prevented some completed tasks from being cleared.");
+});
+
+test("complete-sibling setting clears valid children from a blocked document tree", async () => {
+  const plugin = pluginWithSettings({
+    requireCompleteTreeForClearing: true,
+    clearCompleteSiblingsInBlockedTrees: true,
+  });
+  await plugin.onload();
+  let value = "- [x] Parent\n  - [ ] not\n  - [x] yes\n- [x] Complete\n  - [x] child";
+  const editor = {
+    getValue: () => value,
+    transaction: ({ changes }) => { value = changes[0].text; },
+  };
+  plugin.clearCompletedDocument(editor);
+  assert.equal(value, "- [x] Parent\n  - [ ] not");
+  assert.equal(plugin.notices.at(-1),
+    "Todo: cleared 3 completed tasks from this document. " +
+    "1 incomplete task tree prevented some completed tasks from being cleared.");
+});
+
+test("tree settings apply to clearing the current list scope", async () => {
+  const input = "- [x] Parent\n  - [ ] not\n  - [x] yes\n- [x] Standalone";
+  const blocked = pluginWithSettings({ requireCompleteTreeForClearing: true });
+  await blocked.onload();
+  assert.equal(sort(blocked, input, "clear"),
+    "- [x] Parent\n  - [ ] not\n  - [x] yes");
+  assert.match(blocked.notices.at(-1), /1 incomplete task tree/);
+
+  const siblings = pluginWithSettings({
+    requireCompleteTreeForClearing: true,
+    clearCompleteSiblingsInBlockedTrees: true,
+  });
+  await siblings.onload();
+  assert.equal(sort(siblings, input, "clear"), "- [x] Parent\n  - [ ] not");
+  assert.match(siblings.notices.at(-1), /1 incomplete task tree/);
+});
+
+test("tree-clearing settings default off, normalize, and save", async () => {
+  const plugin = pluginWithSettings({
+    requireCompleteTreeForClearing: "true",
+    clearCompleteSiblingsInBlockedTrees: 1,
+  });
+  await plugin.onload();
+  assert.equal(plugin.settings.requireCompleteTreeForClearing, false);
+  assert.equal(plugin.settings.clearCompleteSiblingsInBlockedTrees, false);
+  plugin.settingTab.display();
+  const requireTree = plugin.settingControls.find(
+    (setting) => setting.name === "Require complete trees before clearing"
+  ).control;
+  const clearSiblings = plugin.settingControls.find(
+    (setting) => setting.name === "Clear complete siblings in blocked trees"
+  ).control;
+  await requireTree.change(true);
+  await clearSiblings.change(true);
+  assert.equal(plugin.saved.requireCompleteTreeForClearing, true);
+  assert.equal(plugin.saved.clearCompleteSiblingsInBlockedTrees, true);
+});

@@ -27,6 +27,8 @@ const DEFAULT_SETTINGS = {
   // `[-]` is completed (sinks below done). Off: `[-]` counts as incomplete.
   cancelledCountsAsCompleted: true,
   clearCancelledTasks: false,
+  requireCompleteTreeForClearing: false,
+  clearCompleteSiblingsInBlockedTrees: false,
   // Columns a tab counts for when measuring indentation.
   tabWidth: TAB_WIDTH,
   // Undated completed items come after dated ones. Off: before them.
@@ -57,6 +59,11 @@ function normalizeSettings(loaded) {
     DEFAULT_SETTINGS.cancelledCountsAsCompleted
   );
   settings.clearCancelledTasks = boolOr(settings.clearCancelledTasks, false);
+  settings.requireCompleteTreeForClearing = boolOr(settings.requireCompleteTreeForClearing, false);
+  settings.clearCompleteSiblingsInBlockedTrees = boolOr(
+    settings.clearCompleteSiblingsInBlockedTrees,
+    false
+  );
   settings.undatedCompletedAtBottom = boolOr(
     settings.undatedCompletedAtBottom,
     DEFAULT_SETTINGS.undatedCompletedAtBottom
@@ -396,15 +403,19 @@ function applyGroup(lines, parsed, group, settings, mode, through) {
   }
 
   if (mode === "clear") {
-    const order = starts.map((_, i) => i).filter((i) =>
-      parsed[starts[i]].status !== "done" &&
-      !(settings.clearCancelledTasks && parsed[starts[i]].status === "cancelled")
-    );
-    if (order.length === starts.length) return null;
+    const removed = new Set();
+    const stats = { cleared: 0, blocked: 0 };
+    for (const start of starts) {
+      if (isClearTarget(parsed[start], settings)) {
+        planTaskClear(parsed, lines, start, settings, removed, stats);
+      }
+    }
+    if (!removed.size) return stats.blocked ? { moved: 0, blocked: stats.blocked } : null;
     return {
-      starts, order, cores, gaps, regionStart: starts[0], regionEnd: end,
-      text: spans.flatMap((span, i) => order.includes(i) ? span : gaps[i]),
-      moved: starts.length - order.length,
+      starts, order: [], cores, gaps, regionStart: starts[0], regionEnd: end,
+      text: lines.slice(starts[0], end).filter((_, offset) => !removed.has(starts[0] + offset)),
+      moved: stats.cleared,
+      blocked: stats.blocked,
     };
   }
 
@@ -447,6 +458,80 @@ function movedLineNumber(result, anchor) {
   return line;
 }
 
+function taskBlockEnd(parsed, lines, start) {
+  const indent = parsed[start].indent;
+  const quoteDepth = parsed[start].quoteDepth;
+  let end = start + 1;
+  let blanks = 0;
+
+  for (let i = start + 1; i < parsed.length; i++) {
+    if (isBlank(lines[i])) {
+      if (blanks >= 1) break;
+      blanks += 1;
+      end = i + 1;
+      continue;
+    }
+    blanks = 0;
+
+    const line = parsed[i];
+    if (line.quoteDepth !== quoteDepth) break;
+    if (line.kind === "none") {
+      if (line.indent === 0) break;
+      end = i + 1;
+      continue;
+    }
+    if (line.indent <= indent) break;
+    end = i + 1;
+  }
+
+  while (end > start + 1 && isBlank(lines[end - 1])) end -= 1;
+  return end;
+}
+
+function isClearTarget(item, settings) {
+  return item.status === "done" ||
+    (settings.clearCancelledTasks && item.status === "cancelled");
+}
+
+function clearBlockedNotice(count) {
+  if (!count) return "";
+  return " " + count + " incomplete task tree" + (count === 1 ? "" : "s") +
+    " prevented some completed tasks from being cleared.";
+}
+
+function planTaskClear(parsed, lines, start, settings, removed, stats) {
+  const end = taskBlockEnd(parsed, lines, start);
+  let clearable = true;
+  if (settings.requireCompleteTreeForClearing) {
+    for (let i = start + 1; i < end; i++) {
+      if (parsed[i].kind !== "none" && !isClearTarget(parsed[i], settings)) {
+        clearable = false;
+        break;
+      }
+    }
+  }
+
+  if (clearable) {
+    for (let i = start; i < end; i++) {
+      if (isClearTarget(parsed[i], settings)) stats.cleared += 1;
+      removed.add(i);
+    }
+    return end;
+  }
+
+  stats.blocked += 1;
+  if (settings.clearCompleteSiblingsInBlockedTrees) {
+    for (let i = start + 1; i < end;) {
+      if (isClearTarget(parsed[i], settings)) {
+        i = planTaskClear(parsed, lines, i, settings, removed, stats);
+      } else {
+        i += 1;
+      }
+    }
+  }
+  return end;
+}
+
 class TodoSortCompletedPlugin extends Plugin {
   async onload() {
     this.settings = normalizeSettings(await this.loadData());
@@ -473,6 +558,16 @@ class TodoSortCompletedPlugin extends Plugin {
       },
     });
     this.addCommand({
+      id: "clear-completed-tasks-in-document",
+      name: "Clear completed tasks in current document",
+      editorCheckCallback: (checking, editor, ctx) => {
+        if (!editor) return false;
+        if (ctx && typeof ctx.getMode === "function" && ctx.getMode() !== "source") return false;
+        if (!checking) this.clearCompletedDocument(editor);
+        return true;
+      },
+    });
+    this.addCommand({
       id: "sort-by-due-date",
       name: "Sort by due date",
       editorCheckCallback: (checking, editor, ctx) => {
@@ -486,6 +581,39 @@ class TodoSortCompletedPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  clearCompletedDocument(editor) {
+    const lines = editor.getValue().split("\n");
+    const parsed = parseLines(lines, { ...this.settings, cancelledCountsAsCompleted: true });
+    const removed = new Set();
+    const stats = { cleared: 0, blocked: 0 };
+
+    for (let i = 0; i < parsed.length;) {
+      if (isClearTarget(parsed[i], this.settings)) {
+        i = planTaskClear(parsed, lines, i, this.settings, removed, stats);
+      } else {
+        i += 1;
+      }
+    }
+
+    if (!removed.size) {
+      new Notice("Todo: nothing to clear in this document." + clearBlockedNotice(stats.blocked));
+      return;
+    }
+
+    const replacement = lines.filter((_, index) => !removed.has(index)).join("\n");
+    editor.transaction({
+      changes: [{
+        from: { line: 0, ch: 0 },
+        to: { line: lines.length - 1, ch: lines[lines.length - 1].length },
+        text: replacement,
+      }],
+    });
+    new Notice(
+      "Todo: cleared " + stats.cleared + " completed task" + (stats.cleared === 1 ? "" : "s") +
+      " from this document." + clearBlockedNotice(stats.blocked)
+    );
   }
 
   sortTasks(editor, mode) {
@@ -550,6 +678,7 @@ class TodoSortCompletedPlugin extends Plugin {
 
     const results = [];
     let movedTotal = 0;
+    let blockedTrees = 0;
     const through = mode === "due-date" ? sortableThrough(this.settings, new Date()) : null;
     let skippedDates = 0;
     for (const group of groups.values()) {
@@ -562,13 +691,16 @@ class TodoSortCompletedPlugin extends Plugin {
       }
       const result = applyGroup(lines, parsed, group, this.settings, mode, through);
       if (result) {
-        results.push(result);
+        blockedTrees += result.blocked || 0;
+        if (mode !== "clear" || result.moved) results.push(result);
         movedTotal += result.moved;
       }
     }
 
     if (!results.length) {
-      new Notice(mode === "clear" ? "Todo: nothing to clear." : "Todo: nothing to sort." + skippedDateNotice(skippedDates));
+      new Notice(mode === "clear"
+        ? "Todo: nothing to clear." + clearBlockedNotice(blockedTrees)
+        : "Todo: nothing to sort." + skippedDateNotice(skippedDates));
       return;
     }
 
@@ -604,7 +736,8 @@ class TodoSortCompletedPlugin extends Plugin {
         from = { line: start - 1, ch: lines[start - 1].length };
       }
       editor.transaction({ changes: [{ from, to, text }] });
-      new Notice("Todo: cleared " + movedTotal + " task" + (movedTotal === 1 ? "" : "s") + ".");
+      new Notice("Todo: cleared " + movedTotal + " task" + (movedTotal === 1 ? "" : "s") + "." +
+        clearBlockedNotice(blockedTrees));
       return;
     }
 
@@ -660,10 +793,30 @@ class TodoSortSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Clear cancelled tasks")
-      .setDesc("Also remove [-] tasks when running Clear completed tasks. Independent of the sorting setting.")
+      .setDesc("Also remove [-] tasks when running either clear command. Independent of the sorting setting.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.clearCancelledTasks).onChange(async (value) => {
           this.plugin.settings.clearCancelledTasks = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Require complete trees before clearing")
+      .setDesc("Keep a completed task when any item in its child tree cannot be cleared, and show a notice when this blocks clearance.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.requireCompleteTreeForClearing).onChange(async (value) => {
+          this.plugin.settings.requireCompleteTreeForClearing = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Clear complete siblings in blocked trees")
+      .setDesc("When a completed tree is blocked, still remove child task trees that are fully complete.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.clearCompleteSiblingsInBlockedTrees).onChange(async (value) => {
+          this.plugin.settings.clearCompleteSiblingsInBlockedTrees = value;
           await this.plugin.saveSettings();
         })
       );

@@ -1,7 +1,8 @@
 # Obsidian Todo Sort
 
-An Obsidian plugin with three commands: **`Todo: Sort completed tasks to bottom`**
-**`Todo: Sort by due date`**, and **`Todo: Clear completed tasks`**.
+An Obsidian plugin with four commands: **`Todo: Sort completed tasks to bottom`**,
+**`Todo: Sort by due date`**, **`Todo: Clear completed tasks`**, and
+**`Todo: Clear completed tasks in current document`**.
 
 It reorders the todo list at the level your cursor is on, or at the shallowest
 list level touched by your selection. Completed tasks sink to the bottom and
@@ -17,6 +18,10 @@ You can optionally limit sorting to dates within a number of days from today.
 level and within the same cursor or selection scope as sorting. Children and
 annotations are removed with their parent, including unfinished children.
 Cancelled `[-]` items are kept by default. The edit can be undone in one step.
+
+`Todo: Clear completed tasks in current document` applies the same clearing
+rules to every list in the active document, including nested tasks. When a
+completed parent is removed, its whole subtree is removed with it.
 
 ## Behaviour
 
@@ -45,6 +50,11 @@ changing any of the above until you touch a setting.
   below done tasks. Off: `[-]` counts as incomplete and stays on top.
 - **Clear cancelled tasks** (off): also remove `[-]` items when clearing
   completed tasks. This is independent of **Cancelled counts as completed**.
+- **Require complete trees before clearing** (off): keep a completed parent
+  when any child list item cannot be cleared. The command reports blocked trees
+  while continuing to clear other complete trees and individual tasks.
+- **Clear complete siblings in blocked trees** (off): when the complete-tree
+  requirement blocks a parent, still remove fully complete child task trees.
 - **Tab width** (4): how many columns a tab character counts for when measuring
   list indentation. Matters when lists mix tabs and spaces.
 - **Undated completed tasks** (bottom of the completed group): completed tasks
@@ -69,7 +79,8 @@ changing any of the above until you touch a setting.
 3. Enable **Todo Sort** in Settings → Community plugins.
 4. Run `Todo: Sort completed tasks to bottom` from the command palette, or bind
    a hotkey to it. Run `Todo: Sort by due date` to order incomplete tasks by
-   their due or scheduled date.
+   their due or scheduled date. The two clear commands remove completed tasks
+   from the current list scope or the whole active document.
 
 There is no build step and no dependencies. `main.js` is the complete source.
 
